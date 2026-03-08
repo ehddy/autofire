@@ -1,38 +1,32 @@
-"""
-AutoFIRE Trading Bot
-한국투자증권 API 기반 자동 매매 봇
-"""
 import os
 import time
 from dotenv import load_dotenv
+from notifications.discord import DiscordNotifier # 생성한 모듈 임포트
 
 # 환경 변수 로드
 load_dotenv()
 
 def main():
-    """
-    봇 메인 실행 함수
-    """
-    print("=" * 50)
-    print("AutoFIRE Trading Bot Started")
-    print("=" * 50)
+    # 디스코드 알림 객체 생성
+    notifier = DiscordNotifier()
 
-    # 환경 변수 확인
+    notifier.send_message("AutoFIRE Trading Bot이 시작되었습니다!")
+
     env = os.getenv('ENV', 'development')
-    print(f"Environment: {env}")
-
-    # TODO: 실제 로직 구현
-    # - KIS API 인증
-    # - 전략 로드
-    # - 스케줄러 시작
-
-    print("Bot is running... (Press Ctrl+C to stop)")
+    notifier.send_message(f"현재 실행 환경: {env}")
 
     try:
+        # 예시: 특정 로직 성공 시 알림
+        notifier.send_message("KIS API 인증 성공. 매매 전략을 가동합니다.")
+        
         while True:
+            # 봇 로직 수행...
             time.sleep(60)
+            
     except KeyboardInterrupt:
-        print("\nBot stopped by user")
+        notifier.send_message("사용자에 의해 봇이 중지되었습니다. 🛑")
+    except Exception as e:
+        notifier.send_message(f"🧨 시스템 에러 발생: {str(e)}")
 
 if __name__ == "__main__":
     main()
