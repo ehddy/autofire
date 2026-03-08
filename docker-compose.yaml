@@ -1,0 +1,103 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  db:
+    image: postgres:15-alpine
+    container_name: autofire-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-autofire}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+      # DB 자체 타임존 및 시스템 타임존 설정
+      TZ: Asia/Seoul
+      PGTZ: Asia/Seoul
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/01_init.sql
+      - ./db/stocks_data.sql:/docker-entrypoint-initdb.d/02_stocks_data.sql
+    networks:
+      - autofire-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Backend API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: autofire-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - DB_HOST=db
+      - DB_PORT=5432
+      - TZ=Asia/Seoul  # 백엔드 서버 시간 설정
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - autofire-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Trading Bot
+  bot:
+    build:
+      context: ./bot
+      dockerfile: Dockerfile
+    container_name: autofire-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - DB_HOST=db
+      - DB_PORT=5432
+      - TZ=Asia/Seoul  # 봇의 스케줄링을 위해 필수 설정
+    volumes:
+      - ./bot:/app
+    depends_on:
+      db:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    networks:
+      - autofire-network
+
+  # Frontend Dashboard
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: autofire-frontend
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Seoul # (선택 사항) 로그 확인용
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    networks:
+      - autofire-network
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  autofire-network:
+    driver: bridge
