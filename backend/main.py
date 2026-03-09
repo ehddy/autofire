@@ -5,22 +5,34 @@ FastAPI 기반 백엔드 서버
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+# API 라우터 import
+from api.v1 import account, trading, stocks, live
+
 app = FastAPI(
     title="AutoFIRE API",
     description="한국투자증권 API 기반 자동 매매 시스템 백엔드",
-    version="1.0.0"
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc"
 )
 
 # CORS 설정
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # 프로덕션에서는 특정 도메인만 허용
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-@app.get("/")
+# API 라우터 등록
+app.include_router(account.router, prefix="/api/v1/account", tags=["계좌 (DB)"])
+app.include_router(trading.router, prefix="/api/v1/trading", tags=["거래 (DB)"])
+app.include_router(stocks.router, prefix="/api/v1/stocks", tags=["종목 (DB)"])
+app.include_router(live.router, prefix="/api/v1/live", tags=["실시간 (KIS API)"])
+
+
+@app.get("/", tags=["기본"])
 def root():
     """
     루트 엔드포인트
@@ -28,37 +40,32 @@ def root():
     return {
         "message": "AutoFIRE API Server",
         "version": "1.0.0",
-        "status": "running"
+        "status": "running",
+        "docs": "/docs"
     }
 
-@app.get("/health")
+
+@app.get("/health", tags=["기본"])
 def health_check():
     """
     헬스 체크 엔드포인트
     """
     return {"status": "healthy"}
 
-@app.get("/api/v1/account/summary")
-def get_account_summary():
-    """
-    계좌 요약 정보 조회
-    """
-    # TODO: 실제 DB 조회 로직 구현
-    return {
-        "total_assets": 10000000,
-        "cash_balance": 5000000,
-        "stock_value": 5000000,
-        "profit_loss": 0,
-        "profit_rate": 0.0
-    }
 
-@app.get("/api/v1/stocks/selected")
-def get_selected_stocks():
+@app.on_event("startup")
+async def startup_event():
     """
-    금일 선정 종목 조회
+    애플리케이션 시작 시 실행
     """
-    # TODO: 실제 DB 조회 로직 구현
-    return {
-        "date": "2026-03-08",
-        "stocks": []
-    }
+    print("🚀 AutoFIRE Backend API 시작...")
+    print("📚 API 문서: http://localhost:8000/docs")
+    print("💡 Bot의 core 모듈을 공유하여 실시간 데이터 제공")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """
+    애플리케이션 종료 시 실행
+    """
+    print("👋 AutoFIRE Backend API 종료...")

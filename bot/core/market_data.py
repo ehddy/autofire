@@ -4,6 +4,7 @@
 import logging
 from typing import Dict, List, Optional
 from .kis_api import KISApiBase
+from .auth import KISAuth
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +13,23 @@ class MarketDataAPI(KISApiBase):
     """
     시세 조회 API
     """
+
+    def __init__(self, app_key: str, app_secret: str, account_no: str, is_virtual: bool = True):
+        """
+        Args:
+            app_key: 앱 키
+            app_secret: 앱 시크릿
+            account_no: 계좌번호
+            is_virtual: 모의투자 여부
+        """
+        super().__init__(app_key, app_secret, account_no, is_virtual)
+
+        # 인증 모듈 초기화
+        self.auth = KISAuth(app_key, app_secret, is_virtual)
+
+        # 액세스 토큰 발급
+        self.access_token = self.auth.get_token()
+        logger.info("MarketDataAPI 초기화 완료 - 토큰 발급됨")
 
     def get_current_price(self, stock_code: str) -> Dict:
         """

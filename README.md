@@ -61,24 +61,49 @@ docker-compose down -v
 ├── .env                        # 환경 변수 (Git 제외)
 ├── .env.example               # 환경 변수 템플릿
 ├── CLAUDE.md                  # 프로젝트 개요
-├── DEVELOPMENT_PLAN.md        # 개발 계획
-├── PROGRESS.md                # 진행 상황
+├── ARCHITECTURE_DECISION.md    # 아키텍처 결정 문서
+├── SETUP_GUIDE.md              # 설치 가이드
 │
 ├── bot/                       # Trading Bot
 │   ├── Dockerfile
 │   ├── main.py
+│   ├── test_api.py            # API 테스트
 │   ├── requirements.txt
-│   ├── core/                  # KIS API 연동
+│   ├── core/                  # KIS API 연동 (backend와 공유)
+│   │   ├── auth.py
+│   │   ├── kis_api.py
+│   │   ├── account.py
+│   │   ├── market_data.py
+│   │   ├── order.py
+│   │   └── db_helper.py
 │   ├── policies/              # 매매 전략
+│   │   └── base.py
 │   └── notifications/         # Discord 알림
+│       └── discord.py
 │
 ├── backend/                   # FastAPI Backend
 │   ├── Dockerfile
 │   ├── main.py
+│   ├── database.py            # DB 연결 설정
 │   ├── requirements.txt
-│   ├── api/                   # API 엔드포인트
+│   ├── core/                  # KIS API 연동 (bot과 공유)
+│   ├── api/v1/                # API 엔드포인트
+│   │   ├── __init__.py
+│   │   ├── account.py
+│   │   ├── live.py
+│   │   ├── stocks.py
+│   │   ├── trading.py
+│   │   └── orders.py
+│   ├── services/              # 비즈니스 로직
+│   │   └── kis_service.py
 │   ├── models/                # DB 모델
+│   │   ├── account.py
+│   │   ├── stock.py
+│   │   └── trade.py
 │   └── schemas/               # Pydantic 스키마
+│       ├── account.py
+│       ├── stock.py
+│       └── trade.py
 │
 ├── frontend/                  # Vue.js Frontend
 │   ├── Dockerfile
@@ -86,7 +111,12 @@ docker-compose down -v
 │   ├── index.html
 │   └── src/
 │       ├── App.vue
-│       └── main.js
+│       ├── main.js
+│       ├── router/            # Vue Router
+│       ├── stores/            # Pinia 상태 관리
+│       ├── services/          # API 클라이언트
+│       ├── views/             # 페이지 컴포넌트
+│       └── components/        # 재사용 컴포넌트
 │
 └── db/                        # Database
     └── init.sql               # 초기 스키마
@@ -121,15 +151,15 @@ npm run dev
 2. `BaseStrategy` 클래스를 상속받아 구현
 3. `.env` 파일의 `ACTIVE_STRATEGIES`에 추가
 
-자세한 내용은 [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md)를 참고하세요.
+자세한 내용은 [CLAUDE.md](CLAUDE.md)를 참고하세요.
 
 ---
 
 ## 문서
 
 - [CLAUDE.md](CLAUDE.md) - 프로젝트 전체 개요 및 아키텍처
-- [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) - 상세 개발 계획
-- [PROGRESS.md](PROGRESS.md) - 개발 진행 상황
+- [ARCHITECTURE_DECISION.md](ARCHITECTURE_DECISION.md) - 아키텍처 설계 결정 사항
+- [SETUP_GUIDE.md](SETUP_GUIDE.md) - 상세 설치 및 설정 가이드
 
 ---
 

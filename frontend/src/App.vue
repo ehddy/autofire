@@ -1,54 +1,31 @@
 <template>
   <div id="app">
     <header>
-      <h1>AutoFIRE</h1>
-      <p>자동 매매 시스템 대시보드</p>
+      <div class="header-content">
+        <div class="logo">
+          <h1>🔥 AutoFIRE</h1>
+          <p>자동 매매 시스템 대시보드</p>
+        </div>
+        <nav class="main-nav">
+          <router-link to="/" class="nav-link">대시보드</router-link>
+          <router-link to="/trading" class="nav-link">거래 내역</router-link>
+          <router-link to="/holdings" class="nav-link">보유 종목</router-link>
+        </nav>
+      </div>
     </header>
 
     <main>
-      <div class="dashboard">
-        <h2>계좌 정보</h2>
-        <div class="account-info">
-          <p>총 자산: {{ accountInfo.total_assets?.toLocaleString() }}원</p>
-          <p>예수금: {{ accountInfo.cash_balance?.toLocaleString() }}원</p>
-          <p>주식 평가액: {{ accountInfo.stock_value?.toLocaleString() }}원</p>
-        </div>
-      </div>
+      <router-view />
     </main>
+
+    <footer>
+      <p>&copy; 2026 AutoFIRE - Financial Independence, Retire Early</p>
+    </footer>
   </div>
 </template>
 
-<script>
-import { ref, onMounted } from 'vue'
-
-export default {
-  name: 'App',
-  setup() {
-    const accountInfo = ref({
-      total_assets: 0,
-      cash_balance: 0,
-      stock_value: 0
-    })
-
-    const fetchAccountInfo = async () => {
-      try {
-        const response = await fetch('/api/v1/account/summary')
-        const data = await response.json()
-        accountInfo.value = data
-      } catch (error) {
-        console.error('Failed to fetch account info:', error)
-      }
-    }
-
-    onMounted(() => {
-      fetchAccountInfo()
-    })
-
-    return {
-      accountInfo
-    }
-  }
-}
+<script setup>
+// Vue 3 Composition API with script setup
 </script>
 
 <style>
@@ -59,46 +36,84 @@ export default {
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  background: #f5f5f5;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  background: #f0f2f5;
+  color: #333;
 }
 
 #app {
   min-height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
 
+/* Header */
 header {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+.header-content {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.logo h1 {
+  font-size: 2em;
+  margin-bottom: 5px;
+}
+
+.logo p {
+  font-size: 0.9em;
+  opacity: 0.9;
+}
+
+.main-nav {
+  display: flex;
+  gap: 10px;
+}
+
+.nav-link {
+  color: white;
+  text-decoration: none;
+  padding: 10px 20px;
+  border-radius: 5px;
+  transition: background 0.3s;
+  font-weight: 500;
+}
+
+.nav-link:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.nav-link.router-link-active {
+  background: rgba(255, 255, 255, 0.3);
+  font-weight: 600;
+}
+
+/* Main Content */
+main {
+  flex: 1;
+  padding: 20px;
+  background: #f0f2f5;
+}
+
+/* Footer */
+footer {
   background: #2c3e50;
   color: white;
-  padding: 2rem;
   text-align: center;
+  padding: 20px;
+  margin-top: auto;
 }
 
-header h1 {
-  font-size: 2.5rem;
-  margin-bottom: 0.5rem;
-}
-
-main {
-  max-width: 1200px;
-  margin: 2rem auto;
-  padding: 0 1rem;
-}
-
-.dashboard {
-  background: white;
-  border-radius: 8px;
-  padding: 2rem;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-}
-
-.dashboard h2 {
-  margin-bottom: 1rem;
-  color: #2c3e50;
-}
-
-.account-info p {
-  padding: 0.5rem 0;
-  font-size: 1.1rem;
+footer p {
+  font-size: 0.9em;
+  opacity: 0.8;
 }
 </style>
