@@ -6,17 +6,6 @@
 
 ---
 
-## 목차
-
-1. [개요](https://www.notion.so/README-md-31d8970381108076a634c72b66d23bbc?pvs=21)
-2. [시작하기](https://www.notion.so/README-md-31d8970381108076a634c72b66d23bbc?pvs=21)
-3. [기술 스택](https://www.notion.so/README-md-31d8970381108076a634c72b66d23bbc?pvs=21)
-4. [시스템 아키텍처](https://www.notion.so/README-md-31d8970381108076a634c72b66d23bbc?pvs=21)
-5. [전략 및 종목 선정 가이드](https://www.notion.so/README-md-31d8970381108076a634c72b66d23bbc?pvs=21)
-6. [매매 규칙](https://www.notion.so/README-md-31d8970381108076a634c72b66d23bbc?pvs=21)
-
----
-
 ## 실행 방법
 
 ### 1. 레포지토리 클론
