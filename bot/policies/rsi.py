@@ -31,7 +31,8 @@ class RSI_Strategy(BaseStrategy):
         self,
         stock_code: str,
         current_data: Dict,
-        historical_data: Optional[List[Dict]] = None
+        historical_data: Optional[List[Dict]] = None,
+        holding_info: Optional[Dict] = None
     ) -> SignalType:
         """
         RSI 기반 매매 시그널 체크
@@ -50,6 +51,7 @@ class RSI_Strategy(BaseStrategy):
                     {'close': int, 'volume': int, 'timestamp': str},
                     ...
                 ]
+            holding_info: 보유 정보 (사용하지 않음)
 
         Returns:
             'BUY' | 'SELL' | 'HOLD'

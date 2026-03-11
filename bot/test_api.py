@@ -1,6 +1,10 @@
 """
-한국투자증권 API 테스트 스크립트 (Discord 알림 연동)
-조회 기능 및 주문 API를 테스트하며 결과를 Discord로 전송합니다.
+한국투자증권 API 종합 테스트 스크립트
+
+모든 조회 기능 및 주문 API를 테스트하며 결과를 Discord로 전송합니다.
+- 기본 조회 API (인증, 현재가, 일봉, 계좌 잔고 등)
+- 신규 조회 API (호가, 거래량/거래대금 순위, 당일 손익, 미체결 주문 등)
+- 주문 API (선택적)
 
 주의: 실제 주문 테스트는 매우 신중하게 수행해야 합니다.
      기본적으로 모의투자 모드에서만 테스트합니다.
@@ -12,17 +16,16 @@ from core.account import AccountAPI
 from core.order import OrderAPI
 from notifications.discord import DiscordNotifier
 
-def test_api():
+
+def test_basic_apis():
     """
-    API 조회 기능 테스트 및 Discord 전송
+    기본 API 조회 기능 테스트 (인증, 시세, 계좌)
     """
     notifier = DiscordNotifier()
-    report = [] # 메시지 요약을 위한 리스트
 
-    print("=" * 60)
-    print("한국투자증권 API 테스트 시작")
-    print("=" * 60)
-    notifier.send_message("🔍 **한국투자증권 API 연결 테스트를 시작합니다.**")
+    header = "=" * 70 + "\n📊 [1단계] 기본 API 테스트\n" + "=" * 70
+    print(header)
+    notifier.send_message("📊 **[1단계] 기본 API 테스트 시작**")
 
     # 환경 변수 검증
     try:
@@ -31,7 +34,7 @@ def test_api():
         error_msg = f"❌ {e}"
         print(error_msg)
         notifier.send_message(error_msg)
-        return
+        return None, None, None
 
     # config에서 값 가져오기
     app_key = config.APP_KEY
@@ -42,9 +45,12 @@ def test_api():
     mode = "모의투자" if is_virtual else "실전투자"
     setup_info = f"✓ 환경 변수 로드 완료\n- 계좌번호: {account_no}\n- 모드: {mode}"
     print(setup_info)
+    notifier.send_message(setup_info)
 
     # 1. 인증 테스트
-    print("\n[1/4] 인증 테스트...")
+    msg = "[1/4] 인증 테스트..."
+    print(f"\n{msg}")
+    notifier.send_message(msg)
     try:
         auth = KISAuth(app_key, app_secret, is_virtual=is_virtual)
         token = auth.get_token()
@@ -55,10 +61,13 @@ def test_api():
         auth_err = f"❌ [인증] 실패: {str(e)}"
         print(auth_err)
         notifier.send_message(auth_err)
-        return
+        return None, None, None
 
     # 2. 시세 조회 테스트
-    print("\n[2/4] 시세 조회 테스트...")
+    msg = "[2/4] 시세 조회 테스트..."
+    print(f"\n{msg}")
+    notifier.send_message(msg)
+    market_api = None
     try:
         market_api = MarketDataAPI(app_key, app_secret, account_no, is_virtual=is_virtual)
         market_api.access_token = token
@@ -80,7 +89,9 @@ def test_api():
         notifier.send_message(f"❌ [시세] 조회 에러: {str(e)}")
 
     # 3. 일봉 데이터 조회
-    print("\n[3/4] 일봉 데이터 조회 테스트...")
+    msg = "[3/4] 일봉 데이터 조회 테스트..."
+    print(f"\n{msg}")
+    notifier.send_message(msg)
     try:
         daily_data = market_api.get_daily_price("005930", period="D")
         if daily_data:
@@ -93,7 +104,10 @@ def test_api():
         notifier.send_message(f"❌ [차트] 데이터 에러: {str(e)}")
 
     # 4. 계좌 조회 테스트
-    print("\n[4/4] 계좌 조회 테스트...")
+    msg = "[4/4] 계좌 조회 테스트..."
+    print(f"\n{msg}")
+    notifier.send_message(msg)
+    account_api = None
     try:
         account_api = AccountAPI(app_key, app_secret, account_no, is_virtual=is_virtual)
         account_api.access_token = token
@@ -106,12 +120,12 @@ def test_api():
                 f"- 예수금: {balance.get('cash_balance', 0):,}원",
                 f"- 보유 종목: {len(balance.get('holdings', []))}개"
             ]
-            
+
             if balance.get('holdings'):
                 acc_res.append("\n[보유 종목 상위]")
                 for holding in balance['holdings'][:3]:
                     acc_res.append(f"• {holding['stock_name']}: {holding['quantity']}주 ({holding['profit_rate']:+.2f}%)")
-            
+
             msg = "\n".join(acc_res)
             print(msg)
             notifier.send_message(msg)
@@ -121,10 +135,154 @@ def test_api():
     except Exception as e:
         notifier.send_message(f"❌ [계좌] 조회 에러: {str(e)}")
 
-    print("\n" + "=" * 60)
-    print("테스트 완료")
-    print("=" * 60)
-    notifier.send_message("🏁 **모든 API 테스트가 완료되었습니다.**")
+    msg = "✅ [1단계] 기본 API 테스트 완료"
+    print(f"\n{msg}")
+    notifier.send_message(msg)
+    return market_api, account_api, notifier
+
+
+def test_advanced_market_apis(market_api, notifier):
+    """
+    신규 추가된 시세 조회 API 테스트 (호가, 순위 등)
+    """
+    header = "\n" + "=" * 70 + "\n📈 [2단계] 신규 시세 조회 API 테스트\n" + "=" * 70
+    print(header)
+    notifier.send_message("📈 **[2단계] 신규 시세 조회 API 테스트 시작**")
+
+    try:
+        # 1. 호가 조회
+        msg = "[1/3] 호가 정보 조회 (삼성전자)"
+        print(f"\n{msg}")
+        notifier.send_message(msg)
+
+        orderbook = market_api.get_orderbook("005930")
+        if orderbook:
+            msg = (f"✅ [호가] 조회 성공\n"
+                   f"- 현재가: {orderbook['current_price']:,}원\n"
+                   f"- 최우선 매도호가: {orderbook['best_ask_price']:,}원\n"
+                   f"- 최우선 매수호가: {orderbook['best_bid_price']:,}원\n"
+                   f"- 총 매도잔량: {orderbook['total_ask_quantity']:,}주\n"
+                   f"- 총 매수잔량: {orderbook['total_bid_quantity']:,}주")
+            print(msg)
+            notifier.send_message(msg)
+        else:
+            msg = "❌ 호가 조회 실패"
+            print(msg)
+            notifier.send_message(msg)
+
+        # 2. 거래량 순위
+        msg = "[2/3] 거래량 순위 (코스피 상위 10개)"
+        print(f"\n{msg}")
+        notifier.send_message(msg)
+        volume_rank = market_api.get_volume_rank(market="1")
+        if volume_rank:
+            rank_msg = [f"✅ [거래량 순위] 조회 성공 ({len(volume_rank)}개)\n"]
+            rank_msg.append("[코스피 거래량 TOP 10]")
+            for i, item in enumerate(volume_rank[:10], 1):
+                rank_msg.append(
+                    f"{i}. {item['stock_name']}({item['stock_code']}) - "
+                    f"거래량: {item['volume']:,}, 등락률: {item['change_rate']:+.2f}%"
+                )
+            msg = "\n".join(rank_msg)
+            print(msg)
+            notifier.send_message(msg[:1990])  # Discord 2000자 제한
+        else:
+            msg = "❌ 거래량 순위 조회 실패"
+            print(msg)
+            notifier.send_message(msg)
+
+        # 3. 거래대금 순위
+        msg = "[3/3] 거래대금 순위 (전체 상위 10개)"
+        print(f"\n{msg}")
+        notifier.send_message(msg)
+        amount_rank = market_api.get_trade_amount_rank(market="0")
+        if amount_rank:
+            rank_msg = [f"✅ [거래대금 순위] 조회 성공 ({len(amount_rank)}개)\n"]
+            rank_msg.append("[전체 거래대금 TOP 10]")
+            for i, item in enumerate(amount_rank[:10], 1):
+                rank_msg.append(
+                    f"{i}. {item['stock_name']}({item['stock_code']}) - "
+                    f"거래대금: {item['trade_amount']:,}원"
+                )
+            msg = "\n".join(rank_msg)
+            print(msg)
+            notifier.send_message(msg[:1990])
+        else:
+            msg = "❌ 거래대금 순위 조회 실패"
+            print(msg)
+            notifier.send_message(msg)
+
+        msg = "✅ [2단계] 신규 시세 조회 API 테스트 완료"
+        print(f"\n{msg}")
+        notifier.send_message(msg)
+
+    except Exception as e:
+        error = f"❌ 신규 시세 조회 API 테스트 실패: {str(e)}"
+        print(error)
+        notifier.send_message(error)
+        import traceback
+        traceback.print_exc()
+
+
+def test_advanced_account_apis(account_api, notifier):
+    """
+    신규 추가된 계좌 조회 API 테스트 (당일 손익, 미체결 주문 등)
+    """
+    header = "\n" + "=" * 70 + "\n💰 [3단계] 신규 계좌 조회 API 테스트\n" + "=" * 70
+    print(header)
+    notifier.send_message("💰 **[3단계] 신규 계좌 조회 API 테스트 시작**")
+
+    try:
+        # 1. 당일 손익 조회
+        msg = "[1/2] 당일 손익 조회"
+        print(f"\n{msg}")
+        notifier.send_message(msg)
+        daily_pl = account_api.get_daily_profit_loss()
+        if daily_pl:
+            msg = (f"✅ [당일 손익] 조회 성공\n"
+                   f"- 매수 금액: {daily_pl['total_buy_amount']:,}원 ({daily_pl['buy_count']}건)\n"
+                   f"- 매도 금액: {daily_pl['total_sell_amount']:,}원 ({daily_pl['sell_count']}건)\n"
+                   f"- 당일 손익: {daily_pl['profit_loss']:,}원")
+            print(msg)
+            notifier.send_message(msg)
+        else:
+            msg = "❌ 당일 손익 조회 실패"
+            print(msg)
+            notifier.send_message(msg)
+
+        # 2. 미체결 주문 조회
+        msg = "[2/2] 미체결 주문 조회"
+        print(f"\n{msg}")
+        notifier.send_message(msg)
+        pending = account_api.get_pending_orders()
+        if pending is not None:
+            msg = f"✅ [미체결 주문] 조회 성공 ({len(pending)}건)"
+            if pending:
+                msg += "\n[미체결 주문 목록]"
+                for order in pending[:5]:  # 최대 5건만
+                    msg += (f"\n• [{order['order_type']}] {order['stock_name']}({order['stock_code']})\n"
+                            f"  주문: {order['order_quantity']}주 @ {order['order_price']:,}원\n"
+                            f"  미체결: {order['pending_quantity']}주")
+            else:
+                msg += "\n(미체결 주문 없음)"
+
+            print(msg)
+            notifier.send_message(msg[:1990])
+        else:
+            msg = "❌ 미체결 주문 조회 실패"
+            print(msg)
+            notifier.send_message(msg)
+
+        msg = "✅ [3단계] 신규 계좌 조회 API 테스트 완료"
+        print(f"\n{msg}")
+        notifier.send_message(msg)
+
+    except Exception as e:
+        error = f"❌ 신규 계좌 조회 API 테스트 실패: {str(e)}"
+        print(error)
+        notifier.send_message(error)
+        import traceback
+        traceback.print_exc()
 
 
 def test_order_api(test_real_order: bool = False):
@@ -138,9 +296,9 @@ def test_order_api(test_real_order: bool = False):
     """
     notifier = DiscordNotifier()
 
-    print("=" * 60)
-    print("한국투자증권 주문 API 테스트 시작")
-    print("=" * 60)
+    header = "\n" + "=" * 70 + "\n🔧 [4단계] 주문 API 테스트\n" + "=" * 70
+    print(header)
+    notifier.send_message("🔧 **[4단계] 주문 API 테스트 시작**")
 
     # 환경 변수 검증
     try:
@@ -165,15 +323,17 @@ def test_order_api(test_real_order: bool = False):
         return
 
     mode = "모의투자" if is_virtual else "실전투자"
-    print(f"✓ 모드: {mode}")
-    notifier.send_message(f"🔧 **주문 API 테스트 시작** (모드: {mode})")
+    msg = f"✓ 모드: {mode}"
+    print(msg)
+    notifier.send_message(msg)
 
     try:
         # OrderAPI 초기화
         order_api = OrderAPI(app_key, app_secret, account_no, is_virtual=is_virtual)
 
-        print("\n[주문 API 초기화 완료]")
-        notifier.send_message("✅ 주문 API 초기화 완료")
+        msg = "✅ 주문 API 초기화 완료"
+        print(f"\n{msg}")
+        notifier.send_message(msg)
 
         if not test_real_order:
             info_msg = "ℹ️ 실제 주문은 실행하지 않습니다. test_real_order=True로 설정하면 모의투자에서 실제 주문을 테스트할 수 있습니다."
@@ -183,7 +343,10 @@ def test_order_api(test_real_order: bool = False):
 
         # 실제 주문 테스트 (모의투자에서만)
         if is_virtual:
-            print("\n[1] 시장가 매수 테스트...")
+            msg = "[1] 시장가 매수 테스트..."
+            print(f"\n{msg}")
+            notifier.send_message(msg)
+
             # 소액으로 테스트 (삼성전자 1주)
             buy_result = order_api.buy_market_order("005930", 1)
 
@@ -193,7 +356,10 @@ def test_order_api(test_real_order: bool = False):
                 notifier.send_message(msg)
 
                 # 주문 상태 조회
-                print("\n[2] 주문 상태 조회...")
+                msg = "[2] 주문 상태 조회..."
+                print(f"\n{msg}")
+                notifier.send_message(msg)
+
                 order_no = buy_result.get('order_no')
                 status = order_api.get_order_status(order_no)
 
@@ -205,10 +371,9 @@ def test_order_api(test_real_order: bool = False):
                 print(error)
                 notifier.send_message(error)
 
-        print("\n" + "=" * 60)
-        print("주문 API 테스트 완료")
-        print("=" * 60)
-        notifier.send_message("🏁 **주문 API 테스트 완료**")
+        msg = "✅ [4단계] 주문 API 테스트 완료"
+        print(f"\n{msg}")
+        notifier.send_message(msg)
 
     except Exception as e:
         error = f"❌ 주문 API 테스트 중 오류 발생: {str(e)}"
@@ -217,8 +382,28 @@ def test_order_api(test_real_order: bool = False):
 
 
 if __name__ == "__main__":
-    # 기본 조회 API 테스트
-    test_api()
+    mode = "모의투자" if config.IS_PAPER_TRADING else "실전투자"
+    header = "\n" + "=" * 70 + f"\n🚀 한국투자증권 API 종합 테스트\n모드: {mode}\n" + "=" * 70
+    print(header)
 
-    # 주문 API 테스트를 원하면 주석 해제 (모의투자에서만!)
+    notifier = DiscordNotifier()
+    notifier.send_message(f"🚀 **한국투자증권 API 종합 테스트 시작**\n모드: {mode}")
+
+    # 1단계: 기본 API 테스트 (인증, 현재가, 일봉, 계좌 잔고)
+    market_api, account_api, notifier = test_basic_apis()
+
+    if market_api and account_api:
+        # 2단계: 신규 시세 조회 API 테스트 (호가, 순위)
+        test_advanced_market_apis(market_api, notifier)
+
+        # 3단계: 신규 계좌 조회 API 테스트 (당일 손익, 미체결 주문)
+        test_advanced_account_apis(account_api, notifier)
+
+    # 4단계: 주문 API 테스트 (선택적)
     test_order_api(test_real_order=False)  # False: 초기화만, True: 실제 주문 테스트
+
+    footer = "\n" + "=" * 70 + "\n🏁 전체 테스트 완료\n" + "=" * 70
+    print(footer)
+
+    if notifier:
+        notifier.send_message("🏁 **한국투자증권 API 종합 테스트가 모두 완료되었습니다.**")

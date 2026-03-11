@@ -85,7 +85,8 @@ class MarketDataAPI(KISApiBase):
             "FID_COND_MRKT_DIV_CODE": "J",
             "FID_INPUT_ISCD": stock_code,
             "FID_PERIOD_DIV_CODE": period,
-            "FID_ORG_ADJ_PRC": "0",  # 수정주가 구분 (0: 미반영)
+            # 자릿수를 10자리로 맞추어 전달 (0: 미반영, 1: 반영)
+            "FID_ORG_ADJ_PRC": "0000000000" 
         }
 
         try:
@@ -183,3 +184,160 @@ class MarketDataAPI(KISApiBase):
         except Exception as e:
             logger.error(f"종목 정보 조회 실패 ({stock_code}): {str(e)}")
             return {}
+
+    def get_orderbook(self, stock_code: str) -> Dict:
+        """
+        호가 정보 조회 (매수/매도 10호가)
+
+        Args:
+            stock_code: 종목코드
+
+        Returns:
+            호가 정보 딕셔너리
+        """
+        endpoint = "/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn"
+        tr_id = "FHKST01010200"
+
+        params = {
+            "FID_COND_MRKT_DIV_CODE": "J",
+            "FID_INPUT_ISCD": stock_code,
+        }
+
+        try:
+            result = self._request("GET", endpoint, tr_id=tr_id, params=params)
+            output1 = result.get("output1", {})
+            output2 = result.get("output2", [])
+
+            # 10호가 데이터 파싱
+            bid_prices = []  # 매수호가
+            ask_prices = []  # 매도호가
+
+            for i in range(1, 11):
+                # 매도호가 (역순으로 저장 - 10호가부터)
+                ask_prices.append({
+                    "price": int(output1.get(f"askp{i}", 0)),
+                    "quantity": int(output1.get(f"askp_rsqn{i}", 0)),
+                })
+
+                # 매수호가
+                bid_prices.append({
+                    "price": int(output1.get(f"bidp{i}", 0)),
+                    "quantity": int(output1.get(f"bidp_rsqn{i}", 0)),
+                })
+
+            return {
+                "stock_code": stock_code,
+                "current_price": int(output1.get("stck_prpr", 0)),  # 현재가
+                "best_ask_price": int(output1.get("askp1", 0)),  # 최우선 매도호가
+                "best_bid_price": int(output1.get("bidp1", 0)),  # 최우선 매수호가
+                "total_ask_quantity": int(output1.get("total_askp_rsqn", 0)),  # 총 매도잔량
+                "total_bid_quantity": int(output1.get("total_bidp_rsqn", 0)),  # 총 매수잔량
+                "ask_prices": ask_prices,  # 매도호가 리스트
+                "bid_prices": bid_prices,  # 매수호가 리스트
+            }
+
+        except Exception as e:
+            logger.error(f"호가 조회 실패 ({stock_code}): {str(e)}")
+            return {}
+
+    def get_volume_rank(self, market: str = "0", condition: str = "0") -> List[Dict]:
+        """
+        거래량 순위 조회
+
+        Args:
+            market: 시장구분 (0: 전체, 1: 코스피, 2: 코스닥)
+            condition: 조건 (0: 전체, 1: 관리종목제외, 5: 증권사추천종목제외 등)
+
+        Returns:
+            거래량 순위 리스트 (상위 30개)
+        """
+        endpoint = "/uapi/domestic-stock/v1/quotations/volume-rank"
+        tr_id = "FHPST01710000"
+
+        params = {
+            "FID_COND_MRKT_DIV_CODE": "J",
+            "FID_COND_SCR_DIV_CODE": "20171",  # 거래량 순위
+            "FID_INPUT_ISCD": "0000",  # 전체
+            "FID_DIV_CLS_CODE": market,  # 시장구분
+            "FID_BLNG_CLS_CODE": condition,  # 조건
+            "FID_TRGT_CLS_CODE": "111111111",  # 대상 (전체)
+            "FID_TRGT_EXLS_CLS_CODE": "0000000000",  # 제외 대상
+            "FID_INPUT_PRICE_1": "",  # 입력가격1
+            "FID_INPUT_PRICE_2": "",  # 입력가격2
+            "FID_VOL_CNT": "",  # 거래량 수
+            "FID_INPUT_DATE_1": "",  # 입력일자1
+        }
+
+        try:
+            result = self._request("GET", endpoint, tr_id=tr_id, params=params)
+            output = result.get("output", [])
+
+            rank_list = []
+            for item in output[:30]:  # 상위 30개만
+                rank_list.append({
+                    "rank": int(item.get("data_rank", 0)),  # 순위
+                    "stock_code": item.get("mksc_shrn_iscd"),  # 종목코드
+                    "stock_name": item.get("hts_kor_isnm"),  # 종목명
+                    "current_price": int(item.get("stck_prpr", 0)),  # 현재가
+                    "change_rate": float(item.get("prdy_ctrt", 0)),  # 전일대비율
+                    "volume": int(item.get("acml_vol", 0)),  # 누적거래량
+                    "trade_amount": int(item.get("acml_tr_pbmn", 0)),  # 누적거래대금
+                })
+
+            logger.info(f"거래량 순위 조회 성공: {len(rank_list)}개")
+            return rank_list
+
+        except Exception as e:
+            logger.error(f"거래량 순위 조회 실패: {str(e)}")
+            return []
+
+    def get_trade_amount_rank(self, market: str = "0") -> List[Dict]:
+        """
+        거래대금 순위 조회
+
+        Args:
+            market: 시장구분 (0: 전체, 1: 코스피, 2: 코스닥)
+
+        Returns:
+            거래대금 순위 리스트 (상위 30개)
+        """
+        endpoint = "/uapi/domestic-stock/v1/quotations/volume-rank"
+        tr_id = "FHPST01710000"
+
+        params = {
+            "FID_COND_MRKT_DIV_CODE": "J",
+            "FID_COND_SCR_DIV_CODE": "20170",  # 거래대금 순위
+            "FID_INPUT_ISCD": "0000",
+            "FID_DIV_CLS_CODE": market,
+            "FID_BLNG_CLS_CODE": "0",
+            "FID_TRGT_CLS_CODE": "111111111",
+            "FID_TRGT_EXLS_CLS_CODE": "0000000000",
+            "FID_INPUT_PRICE_1": "",
+            "FID_INPUT_PRICE_2": "",
+            "FID_VOL_CNT": "",
+            "FID_INPUT_DATE_1": "",
+        }
+
+        try:
+            result = self._request("GET", endpoint, tr_id=tr_id, params=params)
+            output = result.get("output", [])
+
+            rank_list = []
+            for item in output[:30]:
+                rank_list.append({
+                    "rank": int(item.get("data_rank", 0)),
+                    "stock_code": item.get("mksc_shrn_iscd"),
+                    "stock_name": item.get("hts_kor_isnm"),
+                    "current_price": int(item.get("stck_prpr", 0)),
+                    "change_rate": float(item.get("prdy_ctrt", 0)),
+                    "volume": int(item.get("acml_vol", 0)),
+                    "trade_amount": int(item.get("acml_tr_pbmn", 0)),
+                })
+
+            logger.info(f"거래대금 순위 조회 성공: {len(rank_list)}개")
+            return rank_list
+
+        except Exception as e:
+            logger.error(f"거래대금 순위 조회 실패: {str(e)}")
+            return []
+

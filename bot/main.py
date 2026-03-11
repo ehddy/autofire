@@ -263,11 +263,14 @@ class TradingBot:
         실시간 모니터링 및 매매 실행
 
         매매 규칙:
-        1. 익절: 매수가 대비 +3% 도달 시 지정가 매도
-        2. 손절: 매수가 대비 -2% 도달 시 지정가 매도
-        3. 전략 시그널: Strategy의 SELL 시그널 시 지정가 매도
-        4. 강제 청산: 15:20에 전량 시장가 매도
-        5. Daily Stop: 당일 누적 손실 -3% 초과 시 신규 매수 중단
+        1. 전략 시그널: 모든 Strategy의 시그널 체크 (ACTIVE_STRATEGIES 순서대로)
+           - RiskManagement_Strategy: 익절/손절 체크
+           - 기타 전략: 매매 시그널 생성
+        2. 강제 청산: 15:20에 전량 시장가 매도
+        3. Daily Stop: 당일 누적 손실 -3% 초과 시 신규 매수 중단
+
+        주의: RiskManagement_Strategy를 ACTIVE_STRATEGIES의 첫 번째로 배치하여
+              익절/손절이 다른 전략보다 우선 실행되도록 해야 합니다.
         """
         try:
             current_time = datetime.now()
@@ -303,10 +306,10 @@ class TradingBot:
             print(f"📊 선정 종목: {len(self.selected_stocks)}개")
             print(f"💰 당일 손익률: {daily_profit_rate:+.2f}%")
 
-            # 15:20 강제 청산 체크
-            force_liquidation_time = datetime.strptime("15:20", "%H:%M").time()
+            # 강제 청산 체크 (config.MARKET_CLOSE_TIME)
+            force_liquidation_time = datetime.strptime(config.MARKET_CLOSE_TIME, "%H:%M").time()
             if current_time.time() >= force_liquidation_time:
-                print("🔴 15:20 강제 청산 시간!")
+                print(f"🔴 {config.MARKET_CLOSE_TIME} 강제 청산 시간!")
                 self._force_liquidation()
                 return
 
@@ -354,12 +357,11 @@ class TradingBot:
 
     def _check_sell_conditions(self, stock_code: str, holding: Dict):
         """
-        매도 조건 체크 (익절/손절/전략 시그널)
+        매도 조건 체크 (전략 기반)
 
-        매도 우선순위:
-        1. 익절: +3% 도달
-        2. 손절: -2% 도달
-        3. 전략 시그널
+        모든 전략(RiskManagement 포함)의 시그널을 체크합니다.
+        RiskManagement_Strategy가 ACTIVE_STRATEGIES의 첫 번째에 있어야
+        익절/손절 우선순위가 보장됩니다.
 
         Args:
             stock_code: 종목 코드
@@ -371,59 +373,60 @@ class TradingBot:
             if not current_data:
                 return
 
-            avg_buy_price = holding.get('avg_buy_price', 0)
-            current_price = current_data.get('current_price', 0)
             profit_rate = holding.get('profit_rate', 0)
 
-            if not avg_buy_price or not current_price:
-                return
-
-            # 1. 익절 체크 (+3%)
-            if profit_rate >= config.TAKE_PROFIT:
-                print(f"  💰 [{stock_code}] 익절 조건 충족! {profit_rate:+.2f}%")
-                self.notifier.send_message(
-                    f"💰 익절 매도\n종목: {stock_code}\n수익률: {profit_rate:+.2f}%"
-                )
-                # TODO: 지정가 매도 주문 실행
-                # self._execute_sell_order(stock_code, current_price, reason='익절')
-                return
-
-            # 2. 손절 체크 (-2%)
-            if profit_rate <= config.STOP_LOSS:
-                print(f"  🔻 [{stock_code}] 손절 조건 충족! {profit_rate:+.2f}%")
-                self.notifier.send_message(
-                    f"🔻 손절 매도\n종목: {stock_code}\n손실률: {profit_rate:+.2f}%"
-                )
-                # TODO: 지정가 매도 주문 실행
-                # self._execute_sell_order(stock_code, current_price, reason='손절')
-                return
-
-            # 3. 전략 시그널 체크
+            # 분봉 데이터 조회 (전략이 필요로 할 경우를 위해)
             historical_data = self.market_api.get_minute_price(stock_code, count=100)
 
+            # 모든 전략 시그널 체크 (순서대로 실행)
             for strategy in self.strategies:
-                signal = strategy.check_signal(stock_code, current_data, historical_data)
+                # RiskManagement_Strategy는 holding_info를 필요로 함
+                signal = strategy.check_signal(
+                    stock_code,
+                    current_data,
+                    historical_data,
+                    holding_info=holding  # RiskManagement를 위한 보유 정보 전달
+                )
 
                 if signal == 'SELL':
-                    print(f"  🔴 [{strategy.name}] {stock_code} 매도 시그널!")
-                    self.notifier.send_message(
-                        f"🔴 전략 매도\n종목: {stock_code}\n전략: {strategy.name}"
-                    )
+                    # 매도 사유 판별
+                    if strategy.name == "RiskManagement_Strategy":
+                        # RiskManagement의 get_sell_reason 메서드 사용
+                        if hasattr(strategy, 'get_sell_reason'):
+                            reason = strategy.get_sell_reason(profit_rate)
+                            icon = "💰" if profit_rate > 0 else "🔻"
+                            print(f"  {icon} [{stock_code}] {reason}")
+                            self.notifier.send_message(
+                                f"{icon} 리스크 관리 매도\n종목: {stock_code}\n{reason}"
+                            )
+                        else:
+                            print(f"  🔴 [{stock_code}] 리스크 관리 매도! {profit_rate:+.2f}%")
+                            self.notifier.send_message(
+                                f"🔴 리스크 관리 매도\n종목: {stock_code}\n수익률: {profit_rate:+.2f}%"
+                            )
+                    else:
+                        # 다른 전략의 시그널
+                        print(f"  🔴 [{strategy.name}] {stock_code} 매도 시그널!")
+                        self.notifier.send_message(
+                            f"🔴 전략 매도\n종목: {stock_code}\n전략: {strategy.name}"
+                        )
+
                     # TODO: 지정가 매도 주문 실행
-                    # self._execute_sell_order(stock_code, current_price, reason='전략')
-                    break
+                    # self._execute_sell_order(stock_code, current_price, reason=strategy.name)
+                    break  # 첫 번째 SELL 시그널에서 매도 실행 후 종료
 
         except Exception as e:
             print(f"  ⚠️ {stock_code} 매도 조건 체크 실패: {str(e)}")
 
     def _force_liquidation(self):
         """
-        15:20 강제 청산 (전량 시장가 매도)
+        강제 청산 (전량 시장가 매도)
+        .env의 MARKET_CLOSE_TIME에 실행
 
         오버나잇 방지를 위해 모든 보유 종목을 시장가로 매도
         """
         print("\n" + "="*50)
-        print("🔴 강제 청산 시작 (15:20)")
+        print(f"🔴 강제 청산 시작 ({config.MARKET_CLOSE_TIME})")
         print("="*50)
 
         if not self.holdings:
@@ -444,35 +447,42 @@ class TradingBot:
         )
         print("="*50)
 
-    def daily_report(self):
+    def daily_report(self, is_startup: bool = False):
         """
-        장 마감 후 일일 리포트 생성
+        계좌 상태 리포트 생성
 
-        - 금일 거래 내역 요약
+        Args:
+            is_startup: True이면 봇 시작 시 리포트, False이면 정기 일일 리포트
+
+        - 계좌 정보 조회
         - 수익률 계산
         - Discord로 리포트 전송
+        - DB에 스냅샷 저장 (정기 리포트만)
         """
+        report_type = "초기 계좌 상태" if is_startup else "일일 매매 리포트"
         print("\n" + "="*50)
-        print("📊 일일 리포트 생성 중...")
+        print(f"📊 {report_type} 생성 중...")
         print("="*50)
 
         try:
             # 계좌 정보 조회
             balance = self.account_api.get_balance()
 
-            # 계좌 스냅샷 DB 저장
-            snapshot = {
-                'total_assets': balance.get('total_assets', 0),
-                'cash_balance': balance.get('cash_balance', 0),
-                'stock_value': balance.get('stock_value', 0),
-                'profit_loss': balance.get('profit_loss', 0),
-                'profit_rate': balance.get('profit_rate', 0)
-            }
-            self.db.save_account_snapshot(snapshot)
+            # 계좌 스냅샷 DB 저장 (정기 리포트만)
+            if not is_startup:
+                snapshot = {
+                    'total_assets': balance.get('total_assets', 0),
+                    'cash_balance': balance.get('cash_balance', 0),
+                    'stock_value': balance.get('stock_value', 0),
+                    'profit_loss': balance.get('profit_loss', 0),
+                    'profit_rate': balance.get('profit_rate', 0)
+                }
+                self.db.save_account_snapshot(snapshot)
 
             # Discord 리포트 전송
+            title = "📊 **초기 계좌 상태**" if is_startup else "📊 **일일 매매 리포트**"
             report = f"""
-📊 **일일 매매 리포트**
+{title}
 
 💰 총 자산: {balance.get('total_assets', 0):,}원
 💵 예수금: {balance.get('cash_balance', 0):,}원
@@ -483,7 +493,7 @@ class TradingBot:
             """
             self.notifier.send_message(report.strip())
 
-            print("✅ 일일 리포트 생성 완료")
+            print(f"✅ {report_type} 생성 완료")
 
         except Exception as e:
             error_msg = f"리포트 생성 중 오류: {str(e)}"
@@ -492,10 +502,10 @@ class TradingBot:
 
     def setup_schedule(self):
         """
-        스케줄러 설정
+        스케줄러 설정 (.env 기반)
 
         - SELECTION_TIME: 종목 선정
-        - 09:00-15:20: 1분마다 모니터링
+        - MARKET_OPEN_TIME ~ MARKET_CLOSE_TIME: MONITOR_INTERVAL 분마다 모니터링
         - REPORT_TIME: 일일 리포트
         """
         # 종목 선정 (장 시작 전)
@@ -504,26 +514,25 @@ class TradingBot:
         # 일일 리포트 (장 마감 후)
         schedule.every().day.at(config.REPORT_TIME).do(self.daily_report)
 
-        # 장 시간 중 1분마다 모니터링 (09:00~15:20)
-        schedule.every(1).minutes.do(self._scheduled_monitor_and_trade)
+        # 장 시간 중 모니터링 (config.MONITOR_INTERVAL 분마다)
+        schedule.every(config.MONITOR_INTERVAL).minutes.do(self._scheduled_monitor_and_trade)
 
         print("⏰ 스케줄러 설정 완료")
         print(f"  - {config.SELECTION_TIME}: 종목 선정")
-        print(f"  - 09:00~15:20: 1분마다 모니터링")
+        print(f"  - {config.MARKET_OPEN_TIME}~{config.MARKET_CLOSE_TIME}: {config.MONITOR_INTERVAL}분마다 모니터링")
         print(f"  - {config.REPORT_TIME}: 일일 리포트")
 
     def _scheduled_monitor_and_trade(self):
         """
         스케줄러용 모니터링 래퍼
-        장 시간(09:00~15:20)에만 실행
+        .env의 MARKET_OPEN_TIME ~ MARKET_CLOSE_TIME에만 실행
         """
         now = datetime.now()
         current_time = now.time()
 
-        # 장 시작 시간 (09:00)
-        market_open = datetime.strptime("09:00", "%H:%M").time()
-        # 장 마감 시간 (15:20)
-        market_close = datetime.strptime("15:20", "%H:%M").time()
+        # 장 시작/마감 시간 (config에서 가져오기)
+        market_open = datetime.strptime(config.MARKET_OPEN_TIME, "%H:%M").time()
+        market_close = datetime.strptime(config.MARKET_CLOSE_TIME, "%H:%M").time()
 
         # 장 시간 체크
         if market_open <= current_time <= market_close:
@@ -540,12 +549,36 @@ class TradingBot:
         print("🚀 AutoFIRE Trading Bot 시작")
         print("="*50)
 
-        # Discord 시작 알림
-        self.notifier.send_message(
-            f"🚀 AutoFIRE Trading Bot 시작\n"
-            f"모드: {'모의투자' if config.IS_PAPER_TRADING else '실전투자'}\n"
-            f"활성 전략: {', '.join(config.ACTIVE_STRATEGIES) if config.ACTIVE_STRATEGIES else '없음'}"
-        )
+        # Discord 상세 시작 알림 (.env 기반 동적 생성)
+        selectors_str = ', '.join(config.SELECTION_POLICIES) if config.SELECTION_POLICIES else '없음'
+        strategies_str = ', '.join(config.ACTIVE_STRATEGIES) if config.ACTIVE_STRATEGIES else '없음'
+
+        startup_message = f"""🚀 **AutoFIRE Trading Bot 시작**
+
+📊 **모드**: {'모의투자' if config.IS_PAPER_TRADING else '실전투자'}
+
+🎲 **종목 선택 전략** ({len(self.selectors)}개)
+{selectors_str}
+
+📈 **매매 전략** ({len(self.strategies)}개)
+{strategies_str}
+
+⏰ **스케줄**
+• {config.SELECTION_TIME}: 종목 선정
+• {config.MARKET_OPEN_TIME}~{config.MARKET_CLOSE_TIME}: {config.MONITOR_INTERVAL}분마다 모니터링
+• {config.REPORT_TIME}: 일일 리포트
+
+💰 **매매 설정**
+• 최대 매수금액: {config.MAX_BUY_AMOUNT:,}원
+• 익절: +{config.TAKE_PROFIT}%
+• 손절: {config.STOP_LOSS}%
+• Daily Stop: {config.DAILY_STOP_LOSS}%
+• 선정 종목 수: {config.SELECT_COUNT}개
+"""
+        self.notifier.send_message(startup_message.strip())
+
+        # 현재 계좌 상태 리포트 전송 (시작 시)
+        self.daily_report(is_startup=True)
 
         # 스케줄러 설정
         self.setup_schedule()
