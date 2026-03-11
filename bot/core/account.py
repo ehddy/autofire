@@ -176,3 +176,113 @@ class AccountAPI(KISApiBase):
         except Exception as e:
             logger.error(f"주문 내역 조회 실패: {str(e)}")
             return []
+
+    def get_daily_profit_loss(self) -> Dict:
+        """
+        당일 손익 조회
+
+        Returns:
+            당일 손익 정보 딕셔너리
+        """
+        endpoint = "/uapi/domestic-stock/v1/trading/inquire-daily-ccld"
+        tr_id = "VTTC8001R" if self.is_virtual else "TTTC8001R"
+
+        params = {
+            "CANO": self.account_no_prefix,
+            "ACNT_PRDT_CD": self.account_no_suffix,
+            "INQR_STRT_DT": "",
+            "INQR_END_DT": "",
+            "SLL_BUY_DVSN_CD": "00",
+            "INQR_DVSN": "00",
+            "PDNO": "",
+            "CCLD_DVSN": "01",  # 체결구분 (01: 체결)
+            "ORD_GNO_BRNO": "",
+            "ODNO": "",
+            "INQR_DVSN_3": "00",
+            "INQR_DVSN_1": "",
+            "CTX_AREA_FK100": "",
+            "CTX_AREA_NK100": "",
+        }
+
+        try:
+            result = self._request("GET", endpoint, tr_id=tr_id, params=params)
+            output = result.get("output1", [])
+
+            total_buy_amount = 0
+            total_sell_amount = 0
+            buy_count = 0
+            sell_count = 0
+
+            for item in output:
+                executed_qty = int(item.get("tot_ccld_qty", 0))
+                executed_price = int(item.get("avg_prvs", 0))
+                amount = executed_qty * executed_price
+
+                if item.get("sll_buy_dvsn_cd") == "02":  # 매수
+                    total_buy_amount += amount
+                    buy_count += 1
+                else:  # 매도
+                    total_sell_amount += amount
+                    sell_count += 1
+
+            profit_loss = total_sell_amount - total_buy_amount
+
+            summary = {
+                "total_buy_amount": total_buy_amount,
+                "total_sell_amount": total_sell_amount,
+                "profit_loss": profit_loss,
+                "buy_count": buy_count,
+                "sell_count": sell_count,
+            }
+
+            logger.info(f"당일 손익: {profit_loss:,}원 (매수: {buy_count}건, 매도: {sell_count}건)")
+            return summary
+
+        except Exception as e:
+            logger.error(f"당일 손익 조회 실패: {str(e)}")
+            return {}
+
+    def get_pending_orders(self) -> List[Dict]:
+        """
+        미체결 주문 조회
+
+        Returns:
+            미체결 주문 리스트
+        """
+        endpoint = "/uapi/domestic-stock/v1/trading/inquire-psbl-rvsecncl"
+        tr_id = "VTTC8036R" if self.is_virtual else "TTTC8036R"
+
+        params = {
+            "CANO": self.account_no_prefix,
+            "ACNT_PRDT_CD": self.account_no_suffix,
+            "CTX_AREA_FK100": "",
+            "CTX_AREA_NK100": "",
+            "INQR_DVSN_1": "0",  # 조회구분1 (0: 전체)
+            "INQR_DVSN_2": "0",  # 조회구분2 (0: 전체)
+        }
+
+        try:
+            result = self._request("GET", endpoint, tr_id=tr_id, params=params)
+            output = result.get("output", [])
+
+            pending_orders = []
+            for item in output:
+                pending_qty = int(item.get("psbl_qty", 0))
+                if pending_qty > 0:  # 미체결 수량이 있는 것만
+                    pending_orders.append({
+                        "order_no": item.get("odno"),
+                        "stock_code": item.get("pdno"),
+                        "stock_name": item.get("prdt_name"),
+                        "order_type": "매수" if item.get("sll_buy_dvsn_cd") == "02" else "매도",
+                        "order_quantity": int(item.get("ord_qty", 0)),
+                        "order_price": int(item.get("ord_unpr", 0)),
+                        "pending_quantity": pending_qty,  # 미체결 수량
+                        "order_time": item.get("ord_tmd"),
+                    })
+
+            logger.info(f"미체결 주문 조회: {len(pending_orders)}건")
+            return pending_orders
+
+        except Exception as e:
+            logger.error(f"미체결 주문 조회 실패: {str(e)}")
+            return []

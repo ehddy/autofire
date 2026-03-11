@@ -22,6 +22,9 @@ class Config:
     # ===== 스케줄 설정 =====
     SELECTION_TIME: str = os.getenv("SELECTION_TIME", "08:30")
     REPORT_TIME: str = os.getenv("REPORT_TIME", "16:00")
+    MARKET_OPEN_TIME: str = os.getenv("MARKET_OPEN_TIME", "09:00")
+    MARKET_CLOSE_TIME: str = os.getenv("MARKET_CLOSE_TIME", "15:20")
+    MONITOR_INTERVAL: int = int(os.getenv("MONITOR_INTERVAL", "1"))  # 분 단위
 
     # ===== 전략 설정 =====
     ACTIVE_STRATEGIES: List[str] = [

@@ -36,7 +36,8 @@ class BaseStrategy(ABC):
         self,
         stock_code: str,
         current_data: Dict,
-        historical_data: Optional[List[Dict]] = None
+        historical_data: Optional[List[Dict]] = None,
+        holding_info: Optional[Dict] = None
     ) -> SignalType:
         """
         매매 시그널 체크 (분봉 기반)
@@ -45,6 +46,8 @@ class BaseStrategy(ABC):
             stock_code: 종목 코드
             current_data: 현재 시세 정보
             historical_data: 과거 시세 데이터 (선택사항)
+            holding_info: 보유 정보 (선택사항, 매도 시그널 체크 시 전달)
+                {'avg_buy_price': float, 'profit_rate': float, 'quantity': int, ...}
 
         Returns:
             'BUY' | 'SELL' | 'HOLD'
@@ -53,6 +56,7 @@ class BaseStrategy(ABC):
         - 반드시 'BUY', 'SELL', 'HOLD' 중 하나만 반환
         - 주문 실행은 하지 않음 (봇 엔진이 처리)
         - MTF 방식 사용 시 분봉 데이터만 사용
+        - holding_info는 매도 시그널 체크 시에만 전달됨 (매수 시에는 None)
         """
         pass
 

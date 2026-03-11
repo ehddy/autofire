@@ -23,7 +23,7 @@ class DBHelper:
         self.host = os.getenv("DB_HOST", "localhost")
         self.port = int(os.getenv("DB_PORT", 5432))
         self.database = os.getenv("DB_NAME", "autofire")
-        self.user = os.getenv("DB_USER", "postgres")
+        self.user = os.getenv("DB_USER", "autofire")
         self.password = os.getenv("DB_PASSWORD", "postgres")
 
         self.conn = None
