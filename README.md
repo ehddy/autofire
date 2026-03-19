@@ -294,9 +294,32 @@ class RSICustomStrategy(BaseStrategy):
 ACTIVE_STRATEGIES=RSI_Strategy,BollingerBand_Strategy
 ```
 
-### 4. 신호 조합 (Optional)
+### 4. 전략 모드 (STRATEGY_MODE)
 
-복수의 전략이 활성화된 경우, '모든 전략이 BUY일 때만 매수'하거나 '하나라도 SELL이면 매도'하는 등의 **앙상블 로직**을 설정 파일에서 지정할 수 있습니다.
+여러 개의 매매 전략을 활성화한 경우, BUY 시그널을 조합하는 방식을 선택할 수 있습니다:
+
+```bash
+# .env 예시
+ACTIVE_STRATEGIES=RSI_Strategy,BollingerBand_Strategy,MACD_Strategy
+STRATEGY_MODE=OR  # OR 또는 AND
+```
+
+**OR 모드 (기본값, 하나라도 ∪)**
+- 하나의 전략이라도 BUY 시그널을 보내면 매수
+- 예: RSI → BUY, BollingerBand → HOLD, MACD → HOLD
+- 결과: 매수 실행 (1개라도 BUY)
+- 용도: 공격적 진입, 기회 확대
+
+**AND 모드 (모두 일치 ∩)**
+- 모든 전략이 BUY 시그널을 보내야 매수
+- 예: RSI → BUY, BollingerBand → BUY, MACD → HOLD
+- 결과: 매수 보류 (3개 중 2개만 BUY)
+- 용도: 보수적 진입, 확신도 높은 종목만 매수
+
+**중요: SELL 시그널도 동일하게 적용**
+- OR 모드: 하나의 전략이라도 SELL → 매도
+- AND 모드: 모든 전략이 SELL → 매도
+- 단, **RiskManagement (익절/손절)은 항상 최우선**으로 STRATEGY_MODE와 무관하게 즉시 매도
 
 ---
 
@@ -330,6 +353,28 @@ class MyCustomSelector(BaseSelector):
 ### **3. 정책 활성화**
 
 작성한 선정 정책을 적용하려면 .env 파일의 SELECTION_POLICIES 항목에 클래스명을 지정합니다.
+
+### **4. 선정 모드 (SELECTION_MODE)**
+
+여러 개의 Selector를 활성화한 경우, 결과를 조합하는 방식을 선택할 수 있습니다:
+
+```bash
+# .env 예시
+SELECTION_POLICIES=TechnicalSelector,VolumeSelector
+SELECTION_MODE=OR  # OR 또는 AND
+```
+
+**OR 모드 (기본값, 합집합 ∪)**
+- 하나의 Selector라도 선정한 종목을 포함
+- 예: TechnicalSelector가 [A, B, C], VolumeSelector가 [C, D, E] 선정
+- 결과: [A, B, C, D, E] (최대 SELECT_COUNT개)
+- 용도: 다양한 관점의 종목을 포함하여 기회 확대
+
+**AND 모드 (교집합 ∩)**
+- 모든 Selector에서 선정된 종목만 포함
+- 예: TechnicalSelector가 [A, B, C], VolumeSelector가 [C, D, E] 선정
+- 결과: [C] (공통 종목만)
+- 용도: 여러 전략의 확신이 겹치는 종목만 선정하여 리스크 감소
 
 ---
 
@@ -525,8 +570,10 @@ REPORT_TIME=16:00         # 마감 리포트 시간 (HH:MM)
 
 # 전략 및 정책 활성화
 ACTIVE_STRATEGIES=RSI_Strategy,BollingerBand_Strategy
-PORTFOLIO_STRATEGY=EqualWeightAllocator
-SELECTION_POLICIES=TechnicalSelectionPolicy
+STRATEGY_MODE=OR              # OR: 하나라도(∪), AND: 모두 일치(∩)
+SELECTION_POLICIES=TechnicalSelectionPolicy,VolumeSelector
+SELECTION_MODE=OR             # OR: 합집합(∪), AND: 교집합(∩)
+PORTFOLIO_STRATEGY=EqualWeightAllocator  # 자산 배분 전략
 
 # 매매 설정
 MAX_POSITION_RATIO=0.2    # 종목당 최대 투자 비율 (전체 자산의 20%)

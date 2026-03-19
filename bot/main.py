@@ -77,6 +77,7 @@ class TradingBot:
         self.selected_stocks: List[str] = []  # 금일 선정된 종목
         self.holdings: Dict = {}  # 현재 보유 종목 {종목코드: 보유정보}
         self.portfolio_allocation: Dict[str, float] = {}  # 종목별 배분 금액
+        self.traded_stocks = set()  # 당일 거래한 종목 추적 (One-shot 방식)
 
         # Selectors 로드 (종목 선정 정책)
         self.selectors: List[BaseSelector] = self._load_selectors()
@@ -262,31 +263,54 @@ class TradingBot:
         Selectors를 사용하여 거래할 종목을 선정합니다.
         - 일봉 데이터 기반
         - 여러 Selector 결과를 통합
+        - SELECTION_MODE: OR (합집합) 또는 AND (교집합)
         """
+        # 당일 거래 이력 초기화 (One-shot 방식)
+        self.traded_stocks.clear()
+
         print("\n" + "="*50)
         print("📋 종목 선정 시작...")
+        print(f"🔀 선정 모드: {config.SELECTION_MODE}")
         print("="*50)
 
         try:
-            all_selected = []
-
             # 각 Selector로 종목 선정
             if not self.selectors:
                 print("⚠️ 활성화된 Selector가 없습니다.")
                 self.notifier.send_message("⚠️ Selector가 설정되지 않았습니다.")
                 return
 
+            # 각 Selector별 선정 결과 저장
+            selector_results = []
+
             for selector in self.selectors:
                 print(f"\n🔍 {selector.name} 실행 중...")
                 try:
                     selected = selector.select_stocks(select_count=config.SELECT_COUNT)
-                    all_selected.extend(selected)
-                    print(f"  ✅ {len(selected)}개 종목 선정")
+                    selector_results.append(set(selected))
+                    print(f"  ✅ {len(selected)}개 종목 선정: {', '.join(selected)}")
                 except Exception as e:
                     print(f"  ❌ 선정 실패: {str(e)}")
+                    selector_results.append(set())
 
-            # 중복 제거 및 최종 선정
-            self.selected_stocks = list(set(all_selected))[:config.SELECT_COUNT]
+            # SELECTION_MODE에 따라 종목 조합
+            if config.SELECTION_MODE == "AND":
+                # 교집합: 모든 Selector에서 선정된 종목만
+                if selector_results:
+                    final_stocks = selector_results[0]
+                    for result in selector_results[1:]:
+                        final_stocks = final_stocks.intersection(result)
+                    self.selected_stocks = list(final_stocks)[:config.SELECT_COUNT]
+                    print(f"\n🔀 AND 모드: {len(self.selectors)}개 전략 모두에서 선정된 종목")
+                else:
+                    self.selected_stocks = []
+            else:  # OR (기본값)
+                # 합집합: 하나의 Selector라도 선정한 종목
+                final_stocks = set()
+                for result in selector_results:
+                    final_stocks = final_stocks.union(result)
+                self.selected_stocks = list(final_stocks)[:config.SELECT_COUNT]
+                print(f"\n🔀 OR 모드: {len(self.selectors)}개 전략 중 하나라도 선정한 종목")
 
             if self.selected_stocks:
                 # DB에 선정 종목 저장
@@ -304,8 +328,11 @@ class TradingBot:
                     for stock, amount in self.portfolio_allocation.items()
                 ])
 
+                mode_emoji = "∩" if config.SELECTION_MODE == "AND" else "∪"
                 self.notifier.send_message(
-                    f"📋 금일 선정 종목 ({len(self.selected_stocks)}개)\n{stocks_str}\n\n"
+                    f"📋 금일 선정 종목 ({len(self.selected_stocks)}개)\n"
+                    f"🔀 모드: {config.SELECTION_MODE} {mode_emoji}\n"
+                    f"{stocks_str}\n\n"
                     f"💼 자산 배분 ({self.portfolio.name})\n{allocation_details}"
                 )
             else:
@@ -449,6 +476,10 @@ class TradingBot:
             stock_code: 종목 코드
         """
         try:
+            # One-shot 방식: 이미 거래한 종목은 재진입 금지
+            if stock_code in self.traded_stocks:
+                return
+
             # 포트폴리오 배분 확인
             allocated_amount = self.portfolio_allocation.get(stock_code, 0)
             if allocated_amount <= 0:
@@ -464,15 +495,40 @@ class TradingBot:
             historical_data = self.market_api.get_minute_price(stock_code, count=100)
 
             # 각 전략으로 시그널 체크
+            strategy_signals = []
             for strategy in self.strategies:
                 signal = strategy.check_signal(stock_code, current_data, historical_data)
-
+                strategy_signals.append({
+                    'strategy': strategy.name,
+                    'signal': signal
+                })
                 if signal == 'BUY':
-                    print(f"  🟢 [{strategy.name}] {stock_code} 매수 시그널!")
-                    print(f"     배분 금액: {allocated_amount:,.0f}원")
-                    # TODO: 실제 매수 주문 실행
-                    # self._execute_buy_order(stock_code, current_data, allocated_amount)
-                    break  # 하나의 전략에서라도 매수 시그널이 나오면 실행
+                    print(f"  🟢 [{strategy.name}] {stock_code} BUY 시그널")
+
+            # STRATEGY_MODE에 따라 최종 매수 결정
+            should_buy = False
+
+            if config.STRATEGY_MODE == "AND":
+                # AND 모드: 모든 전략이 BUY 시그널을 보내야 매수
+                buy_count = sum(1 for s in strategy_signals if s['signal'] == 'BUY')
+                if buy_count == len(self.strategies) and len(self.strategies) > 0:
+                    should_buy = True
+                    print(f"  ✅ AND 모드: 모든 전략({len(self.strategies)}개)이 BUY → 매수 실행")
+                else:
+                    print(f"  ⏸️  AND 모드: {buy_count}/{len(self.strategies)}개만 BUY → 매수 보류")
+            else:  # OR 모드 (기본값)
+                # OR 모드: 하나의 전략이라도 BUY 시그널을 보내면 매수
+                buy_count = sum(1 for s in strategy_signals if s['signal'] == 'BUY')
+                if buy_count > 0:
+                    should_buy = True
+                    print(f"  ✅ OR 모드: {buy_count}개 전략이 BUY → 매수 실행")
+
+            if should_buy:
+                print(f"     💰 배분 금액: {allocated_amount:,.0f}원")
+                # TODO: 실제 매수 주문 실행
+                # success = self._execute_buy_order(stock_code, current_data, allocated_amount)
+                # if success:
+                #     self.traded_stocks.add(stock_code)  # One-shot 방식: 거래 완료 추적
 
         except Exception as e:
             print(f"  ⚠️ {stock_code} 매수 시그널 체크 실패: {str(e)}")
@@ -500,7 +556,10 @@ class TradingBot:
             # 분봉 데이터 조회 (전략이 필요로 할 경우를 위해)
             historical_data = self.market_api.get_minute_price(stock_code, count=100)
 
-            # 모든 전략 시그널 체크 (순서대로 실행)
+            # 모든 전략 시그널 체크
+            strategy_signals = []
+            risk_management_signal = None
+
             for strategy in self.strategies:
                 # RiskManagement_Strategy는 holding_info를 필요로 함
                 signal = strategy.check_signal(
@@ -510,32 +569,70 @@ class TradingBot:
                     holding_info=holding  # RiskManagement를 위한 보유 정보 전달
                 )
 
-                if signal == 'SELL':
-                    # 매도 사유 판별
-                    if strategy.name == "RiskManagement_Strategy":
-                        # RiskManagement의 get_sell_reason 메서드 사용
-                        if hasattr(strategy, 'get_sell_reason'):
-                            reason = strategy.get_sell_reason(profit_rate)
-                            icon = "💰" if profit_rate > 0 else "🔻"
-                            print(f"  {icon} [{stock_code}] {reason}")
-                            self.notifier.send_message(
-                                f"{icon} 리스크 관리 매도\n종목: {stock_code}\n{reason}"
-                            )
-                        else:
-                            print(f"  🔴 [{stock_code}] 리스크 관리 매도! {profit_rate:+.2f}%")
-                            self.notifier.send_message(
-                                f"🔴 리스크 관리 매도\n종목: {stock_code}\n수익률: {profit_rate:+.2f}%"
-                            )
-                    else:
-                        # 다른 전략의 시그널
-                        print(f"  🔴 [{strategy.name}] {stock_code} 매도 시그널!")
-                        self.notifier.send_message(
-                            f"🔴 전략 매도\n종목: {stock_code}\n전략: {strategy.name}"
-                        )
+                # RiskManagement는 항상 우선 처리 (익절/손절)
+                if strategy.name == "RiskManagement_Strategy":
+                    risk_management_signal = {
+                        'strategy': strategy.name,
+                        'signal': signal,
+                        'profit_rate': profit_rate,
+                        'has_reason': hasattr(strategy, 'get_sell_reason')
+                    }
+                    if signal == 'SELL':
+                        print(f"  🔴 [{strategy.name}] {stock_code} SELL 시그널 (리스크 관리)")
+                else:
+                    strategy_signals.append({
+                        'strategy': strategy.name,
+                        'signal': signal
+                    })
+                    if signal == 'SELL':
+                        print(f"  🔴 [{strategy.name}] {stock_code} SELL 시그널")
 
-                    # TODO: 지정가 매도 주문 실행
-                    # self._execute_sell_order(stock_code, current_price, reason=strategy.name)
-                    break  # 첫 번째 SELL 시그널에서 매도 실행 후 종료
+            # 매도 결정 로직
+            should_sell = False
+            sell_reason = None
+
+            # 1. RiskManagement가 SELL이면 무조건 매도 (익절/손절 우선)
+            if risk_management_signal and risk_management_signal['signal'] == 'SELL':
+                should_sell = True
+                sell_reason = "RiskManagement"
+                if risk_management_signal['has_reason']:
+                    from policies.risk_management_strategy import RiskManagement_Strategy
+                    for s in self.strategies:
+                        if s.name == "RiskManagement_Strategy":
+                            reason_text = s.get_sell_reason(profit_rate)
+                            break
+                else:
+                    reason_text = f"리스크 관리 매도 ({profit_rate:+.2f}%)"
+
+                icon = "💰" if profit_rate > 0 else "🔻"
+                print(f"  {icon} [{stock_code}] {reason_text}")
+
+            # 2. RiskManagement가 SELL이 아니면 STRATEGY_MODE에 따라 판단
+            else:
+                if config.STRATEGY_MODE == "AND":
+                    # AND 모드: 모든 전략이 SELL 시그널을 보내야 매도
+                    sell_count = sum(1 for s in strategy_signals if s['signal'] == 'SELL')
+                    if sell_count == len(strategy_signals) and len(strategy_signals) > 0:
+                        should_sell = True
+                        sell_reason = "전략 AND 모드"
+                        print(f"  ✅ AND 모드: 모든 전략({len(strategy_signals)}개)이 SELL → 매도 실행")
+                    else:
+                        print(f"  ⏸️  AND 모드: {sell_count}/{len(strategy_signals)}개만 SELL → 매도 보류")
+                else:  # OR 모드 (기본값)
+                    # OR 모드: 하나의 전략이라도 SELL 시그널을 보내면 매도
+                    sell_count = sum(1 for s in strategy_signals if s['signal'] == 'SELL')
+                    if sell_count > 0:
+                        should_sell = True
+                        sell_reason = "전략 OR 모드"
+                        print(f"  ✅ OR 모드: {sell_count}개 전략이 SELL → 매도 실행")
+
+            # 매도 실행
+            if should_sell:
+                self.notifier.send_message(
+                    f"🔴 매도 실행\n종목: {stock_code}\n사유: {sell_reason}"
+                )
+                # TODO: 지정가 매도 주문 실행
+                # self._execute_sell_order(stock_code, current_price, reason=sell_reason)
 
         except Exception as e:
             print(f"  ⚠️ {stock_code} 매도 조건 체크 실패: {str(e)}")
@@ -682,12 +779,14 @@ class TradingBot:
 
 🎲 **종목 선택 전략** ({len(self.selectors)}개)
 {selectors_str}
+🔀 **선정 모드**: {config.SELECTION_MODE} {'(교집합 ∩)' if config.SELECTION_MODE == 'AND' else '(합집합 ∪)'}
 
 💼 **자산 배분 전략**
 {portfolio_str}
 
 📈 **매매 전략** ({len(self.strategies)}개)
 {strategies_str}
+⚡ **전략 모드**: {config.STRATEGY_MODE} {'(모두 일치 ∩)' if config.STRATEGY_MODE == 'AND' else '(하나라도 ∪)'}
 
 ⏰ **스케줄**
 • {config.SELECTION_TIME}: 종목 선정 및 자산 배분
