@@ -37,6 +37,7 @@ class Config:
         for s in os.getenv("SELECTION_POLICIES", "").split(",")
         if s.strip()
     ]
+    PORTFOLIO_STRATEGY: str = os.getenv("PORTFOLIO_STRATEGY", "EqualWeightAllocator")
 
     # ===== 매매 설정 =====
     MAX_BUY_AMOUNT: int = int(os.getenv("MAX_BUY_AMOUNT", "1000000"))
@@ -99,6 +100,7 @@ class Config:
         print(f"📊 리포트: {cls.REPORT_TIME}")
         print(f"📈 활성 전략: {', '.join(cls.ACTIVE_STRATEGIES) if cls.ACTIVE_STRATEGIES else '없음'}")
         print(f"🎲 선정 정책: {', '.join(cls.SELECTION_POLICIES) if cls.SELECTION_POLICIES else '없음'}")
+        print(f"💼 자산 배분: {cls.PORTFOLIO_STRATEGY}")
         print(f"💰 최대 매수금액: {cls.MAX_BUY_AMOUNT:,}원")
         print(f"📉 손절: {cls.STOP_LOSS}%")
         print(f"📈 익절: {cls.TAKE_PROFIT}%")

@@ -6,6 +6,17 @@
 
 ---
 
+## 목차
+
+1. [개요](https://www.notion.so/README-md-31d8970381108076a634c72b66d23bbc?pvs=21)
+2. [시작하기](https://www.notion.so/README-md-31d8970381108076a634c72b66d23bbc?pvs=21)
+3. [기술 스택](https://www.notion.so/README-md-31d8970381108076a634c72b66d23bbc?pvs=21)
+4. [시스템 아키텍처](https://www.notion.so/README-md-31d8970381108076a634c72b66d23bbc?pvs=21)
+5. [전략 및 종목 선정 가이드](https://www.notion.so/README-md-31d8970381108076a634c72b66d23bbc?pvs=21)
+6. [매매 규칙](https://www.notion.so/README-md-31d8970381108076a634c72b66d23bbc?pvs=21)
+
+---
+
 ## 실행 방법
 
 ### 1. 레포지토리 클론
@@ -86,6 +97,7 @@ docker-compose down -v && docker-compose up -d
 - **Daily Selection**: 매일 장 시작 전, 특정 조건에 따라 N개의 대상 종목을 자동 선정합니다.
 - **Real-time Monitoring**: 선정된 종목의 주가를 분 단위로 수집하여 상태를 추적합니다.
 - **Pluggable Policy**: 매수/매도 로직과 종목 선정 로직이 **인터페이스화(Interface)** 되어 있어, 새로운 전략을 모듈 형태로 손쉽게 추가하거나 교체할 수 있습니다.
+- **Smart Asset Allocation:** 선정된 종목들에 대해 가용한 자산을 전략적으로 배분합니다. 동일 비중(Equal Weight) 배분뿐만 아니라, 종목별 확신도나 리스크 지표에 따라 **사용자가 직접 정의한 차등 가중치 배분 정책**을 지원합니다.
 - **Multi-Strategy Pipeline**: 하나 이상의 매매 정책을 동시에 활성화할 수 있습니다. 각 전략별로 자산을 배분하거나, 여러 전략의 공통 신호를 포착하는 앙상블 매매가 가능합니다.
 - **Configurable Limits**: 사용자 설정을 통해 최대 투자 비율, 익절/손절 기준, 일일 손실 한도 등을 자유롭게 조절합니다.
 
@@ -155,13 +167,18 @@ AutoFIRE는 4개의 독립된 컨테이너가 유기적으로 동작하며, 특�
 │   ├── Dockerfile              # Python 기반 봇 이미지 빌드
 │   ├── main.py                 # 봇 실행 진입점 (Entry Point)
 │   ├── core/                   # 한국투자증권 API 연동 및 공통 모듈 (Shared)
-│   ├── selectors/              # 종목 선정 정책 (확장 가능)
+│   ├── selectors/              # 종목 선정 정책 (확장 가능) [Step 1]
 │   │   ├── base.py             # 종목 선정 인터페이스 (Abstract Base Class)
 │   │   └── custom_selector.py  # 종목 선정 전략 모듈
+│   ├── portfolios/             # 자산 배분 정책 [Step 2]
+│   │   ├── base.py             # 자산 배분 인터페이스 (ABC)
+│   │   ├── equal_allocator.py  # 동일 비중 배분 (1/N)
+│   │   └── weight_allocator.py # 가중치 기반 배분 모듈
 │   ├── notifications/          # 디스코드 연동
-│   ├── policies/               # 매매 실행 전략 (확장 가능)
+│   ├── policies/               # 매매 실행 전략 (확장 가능)[Step 3]
 │   │   ├── base.py             # 매매 전략 인터페이스 (Abstract Base Class)
 │   │   └── rsi_strategy.py     # 매수/매도 정책 모듈
+
 │   └── requirements.txt        # 봇 관련 패키지 목록
 │
 ├── backend/                    # [Container 2] FastAPI Server
@@ -191,10 +208,50 @@ AutoFIRE는 4개의 독립된 컨테이너가 유기적으로 동작하며, 특�
 - **`.env`**: `APP_KEY`, `APP_SECRET`, `DB_PASSWORD` 등 보안이 중요한 정보는 이 파일에서 통합 관리하며, **Dockerfile 내부로 직접 하드코딩하지 않습니다.**
 - **`bot/selectors/` (Selection Policy)**:
   이 프로젝트의 **종목 유니버스 구성을 담당**하는 폴더입니다. `BaseSelector` 클래스를 상속받아 새로운 `.py` 파일을 만드는 것만으로 당일 거래할 종목을 고르는 알고리즘(예: 거래량 상위, 특정 지표 돌파 등)을 무한히 확장할 수 있습니다.
+- **`bot/portfolios/`** **(Portfolio Strategy):**
+  이 프로젝트의 **자산 배분(Asset Allocation)**을 담당하는 폴더입니다. `BasePortfolio` 클래스를 상속받아 선정된 종목들에 예산을 어떻게 나눌지 결정하는 로직을 구현합니다. (예: N분의 1로 나누는 동일 비중 배분, 수익률 확신도에 따른 차등 배분 등) 단순히 "무엇을 사느냐"를 넘어 "얼마나 사느냐"를 전략적으로 관리하여 계좌의 리스크를 제어합니다.
 - **`bot/policies/` (Trading Strategy)**:
   이 프로젝트의 **실전 매매 타이밍을 담당**하는 폴더입니다. `BaseStrategy` 클래스를 상속받아 실시간 주가 분석을 통한 매수/매도 시그널 결정 로직(예: RSI, 이동평균선 등)을 개별 모듈로 추가하여 운용할 수 있습니다.
 - **`db/init.sql`**: 컨테이너가 처음 실행될 때 종목 정보, 거래 이력 테이블을 자동으로 생성하여 초기 세팅 번거로움을 최소화합니다.
 - **`bot/core/`**: [Shared Core Module] 한국투자증권 API 연동(인증, 시세, 주문, 계좌)을 담당하는 시스템의 핵심 엔진입니다. `bot`과 `backend` 컨테이너가 이 폴더를 공유함으로써 코드 중복을 방지하고, 웹 대시보드에서 지연 없는 실시간 데이터 조회를 가능하게 합니다.
+
+---
+
+## **포트폴리오 전략(Portfolio) 추가 가이드**
+
+본 시스템은 선정된 종목들에 대해 가용한 자산을 어떻게 배분할지 결정하는 포트폴리오 레이어를 제공합니다.
+
+### **1. 새로운 배분 정책 파일 생성**
+
+`bot/portfolios/` 디렉토리에 파이썬 파일을 생성합니다. (예: `risk_allocator.py`)
+
+### **2. Base 클래스 상속 및 메서드 구현**
+
+`BasePortfolio` 클래스를 상속받아 `allocate` 메서드를 구현합니다.
+
+```python
+from .base import BasePortfolio
+
+class CustomWeightAllocator(BasePortfolio):
+    def allocate(self, selected_stocks: list, total_budget: float) -> dict:
+        """
+        [자산 배분 로직]
+        - selected_stocks: Selector에 의해 선정된 종목 리스트
+        - total_budget: 매수 가능한 총 예산 (예: 1억)
+        - Returns: { "종목코드": 배분금액 } 형태의 딕셔너리
+        """
+        # 예: 종목당 동일하게 배분하거나, 특정 지표에 따라 가중치 부여
+        share = total_budget / len(selected_stocks)
+        return {code: share for code in selected_stocks}
+```
+
+### **3. 정책 활성화**
+
+`.env` 파일에서 사용할 포트폴리오 전략을 지정합니다.
+
+```python
+PORTFOLIO_STRATEGY=EqualWeightAllocator
+```
 
 ---
 
@@ -278,16 +335,19 @@ class MyCustomSelector(BaseSelector):
 
 ## 전략 설계 가이드
 
+본 시스템은 **Selectors(종목 선정)**, **Portfolios(자산 배분)**, **Policies(매매 실행)**의 3단계 레이어가 독립적으로 설계되어, 사용자의 투자 목적에 따라 다양한 전략 조합이 가능합니다.
+
 `selectors/`와 `policies/`는 독립적으로 설계되어 다양한 전략을 자유롭게 조합할 수 있습니다.
 
 전략 구현 방식 중 하나로 **MTF(Multi-Time Frame)** 방식을 활용할 수 있습니다.
 일봉으로 종목의 방향성을 먼저 필터링하고, 분봉으로 진입 타이밍을 잡는 방식입니다.
 
 ```
-selectors/                            policies/
-──────────────────────────────        ──────────────────────────────
-일봉 기준 필터링                       분봉 기준 진입 타이밍
-"오늘 거래할 종목 풀 구성"              "지금 이 순간 매매할지 판단"
+selectors/                 portfolios/                policies/
+───────────────────        ───────────────────        ───────────────────
+[What to Buy]              [How Much to Buy]          [When to Buy]
+일봉 기준 종목 필터링  ▶    자산 배분 및 투자 비중  ▶    분봉 기준 실시간 진입
+"오늘의 공략 종목군"        "종목별 투입 예산 결정"      "최적의 매매 타이밍"
 ```
 
 ### MTF 전략 예시
@@ -354,11 +414,12 @@ AutoFIRE의 봇 엔진은 24시간 상주하며 사용자가 설정한 스케줄
 
 봇은 파이썬 `schedule` 라이브러리를 활용하여 안정적인 순차적 작업 흐름을 유지합니다.
 
-| **단계**          | **시간 (설정 가능)** | **주요 작업 및 프로세스**                                                             |
-| ----------------- | -------------------- | ------------------------------------------------------------------------------------- |
-| **종목 선정**     | `SELECTION_TIME`     | 활성화된 **Selection Policy**를 구동하여 당일 거래 대상 종목 유니버스 구축 및 DB 저장 |
-| **실시간 매매**   | 09:00 ~ 15:30        | 1분 단위 루프: 현재가 모니터링 → 전략 신호 체크(`check_signal`) → 주문 실행           |
-| **데일리 리포트** | `REPORT_TIME`        | 장 마감 후 당일 매매 결산, 수익률 집계 및 계좌 현황 요약 리포트 전송                  |
+| **단계**          | **시간 (설정 가능)**  | **주요 작업 및 프로세스**                                                                 |
+| ----------------- | --------------------- | ----------------------------------------------------------------------------------------- |
+| **종목 선정**     | `SELECTION_TIME`      | 활성화된 **Selection Policy**를 구동하여 당일 거래 대상 종목 유니버스 구축 및 DB 저장     |
+| **자산 배분**     | `SELECTION_TIME` 직후 | 선정된 종목들에 대해 **Portfolio Strategy**를 적용하여 종목별 투자 비중 및 가용 예산 확정 |
+| **실시간 매매**   | 09:00 ~ 15:30         | 1분 단위 루프: 현재가 모니터링 → 전략 신호 체크(`check_signal`) → 주문 실행               |
+| **데일리 리포트** | `REPORT_TIME`         | 장 마감 후 당일 매매 결산, 수익률 집계 및 계좌 현황 요약 리포트 전송                      |
 
 ### 3. 전략 및 선정 정책의 확장성 (Modular Strategy)
 
@@ -383,6 +444,7 @@ AutoFIRE의 기본 매매 규칙을 정의합니다.
 
 ### 1. 포지션 규칙
 
+- **자산 배분 우선:** 매수 시 시그널뿐만 아니라 `Portfolio Strategy`에서 할당된 종목별 예산을 초과하여 매수하지 않습니다.
 - **One-shot 일괄 매수**: BUY 시그널 발생 시 해당 종목 예산 전액을 한 번에 매수합니다.
 - **중복 진입 금지**: 이미 보유 중인 종목에 BUY 시그널이 재발생해도 추가 매수하지 않습니다.
 - **종목당 투자 한도**: 전체 투자금의 최대 **N%** 를 단일 종목에 배분합니다. (`.env`의 `MAX_POSITION_RATIO`로 설정)
@@ -463,6 +525,7 @@ REPORT_TIME=16:00         # 마감 리포트 시간 (HH:MM)
 
 # 전략 및 정책 활성화
 ACTIVE_STRATEGIES=RSI_Strategy,BollingerBand_Strategy
+PORTFOLIO_STRATEGY=EqualWeightAllocator
 SELECTION_POLICIES=TechnicalSelectionPolicy
 
 # 매매 설정

@@ -27,6 +27,7 @@ from notifications.discord import DiscordNotifier
 
 # Base 클래스
 from selectors.base import BaseSelector
+from portfolios.base import BasePortfolio
 from policies.base import BaseStrategy
 
 class TradingBot:
@@ -75,9 +76,13 @@ class TradingBot:
         # 봇 상태
         self.selected_stocks: List[str] = []  # 금일 선정된 종목
         self.holdings: Dict = {}  # 현재 보유 종목 {종목코드: 보유정보}
+        self.portfolio_allocation: Dict[str, float] = {}  # 종목별 배분 금액
 
         # Selectors 로드 (종목 선정 정책)
         self.selectors: List[BaseSelector] = self._load_selectors()
+
+        # Portfolio 로드 (자산 배분 정책)
+        self.portfolio: BasePortfolio = self._load_portfolio()
 
         # Policies 로드 (매매 전략)
         self.strategies: List[BaseStrategy] = self._load_strategies()
@@ -85,6 +90,7 @@ class TradingBot:
         print("✅ AutoFIRE Trading Bot 초기화 완료")
         print(f"📊 모드: {'모의투자' if config.IS_PAPER_TRADING else '실전투자'}")
         print(f"🎲 활성화된 Selectors: {len(self.selectors)}개")
+        print(f"💼 활성화된 Portfolio: {self.portfolio.name if self.portfolio else '없음'}")
         print(f"📈 활성화된 Strategies: {len(self.strategies)}개")
 
     def _load_selectors(self) -> List[BaseSelector]:
@@ -124,6 +130,49 @@ class TradingBot:
                 print(f"  ⚠️ Selector 로드 실패: {policy_name} - {str(e)}")
 
         return selectors
+
+    def _load_portfolio(self) -> BasePortfolio:
+        """
+        환경 변수에서 Portfolio 클래스를 동적으로 로드
+
+        자동 탐색 방식:
+        1. portfolios/ 폴더의 모든 .py 파일 스캔
+        2. 환경 변수의 클래스명과 일치하는 클래스 찾기
+        3. 인스턴스 생성
+
+        Returns:
+            로드된 Portfolio 인스턴스 (없으면 기본값: EqualWeightAllocator)
+        """
+        portfolio_name = config.PORTFOLIO_STRATEGY
+
+        if not portfolio_name:
+            print("⚠️ PORTFOLIO_STRATEGY가 설정되지 않았습니다. 기본값(EqualWeightAllocator) 사용")
+            portfolio_name = "EqualWeightAllocator"
+
+        try:
+            # portfolios/ 폴더에서 클래스 찾기
+            portfolio = self._find_and_load_class(
+                package='portfolios',
+                class_name=portfolio_name,
+                base_class=BasePortfolio
+            )
+
+            if portfolio:
+                print(f"  ✅ Portfolio 로드: {portfolio_name}")
+                return portfolio
+            else:
+                print(f"  ⚠️ Portfolio 로드 실패: {portfolio_name} - 클래스를 찾을 수 없습니다.")
+                print(f"  기본값(EqualWeightAllocator) 사용")
+                # Fallback: EqualWeightAllocator
+                from portfolios.equal_allocator import EqualWeightAllocator
+                return EqualWeightAllocator()
+
+        except Exception as e:
+            print(f"  ⚠️ Portfolio 로드 실패: {portfolio_name} - {str(e)}")
+            print(f"  기본값(EqualWeightAllocator) 사용")
+            # Fallback: EqualWeightAllocator
+            from portfolios.equal_allocator import EqualWeightAllocator
+            return EqualWeightAllocator()
 
     def _load_strategies(self) -> List[BaseStrategy]:
         """
@@ -239,16 +288,26 @@ class TradingBot:
             # 중복 제거 및 최종 선정
             self.selected_stocks = list(set(all_selected))[:config.SELECT_COUNT]
 
-            # DB에 선정 종목 저장
             if self.selected_stocks:
+                # DB에 선정 종목 저장
                 self.db.save_selected_stocks(self.selected_stocks)
+
+                print(f"\n✅ 최종 선정: {len(self.selected_stocks)}개 종목")
+
+                # 자산 배분 실행
+                self._allocate_portfolio()
 
                 # Discord 알림
                 stocks_str = ", ".join(self.selected_stocks)
+                allocation_details = "\n".join([
+                    f"  • {stock}: {amount:,.0f}원"
+                    for stock, amount in self.portfolio_allocation.items()
+                ])
+
                 self.notifier.send_message(
-                    f"📋 금일 선정 종목 ({len(self.selected_stocks)}개)\n{stocks_str}"
+                    f"📋 금일 선정 종목 ({len(self.selected_stocks)}개)\n{stocks_str}\n\n"
+                    f"💼 자산 배분 ({self.portfolio.name})\n{allocation_details}"
                 )
-                print(f"\n✅ 최종 선정: {len(self.selected_stocks)}개 종목")
             else:
                 print("⚠️ 선정된 종목이 없습니다.")
                 self.notifier.send_message("⚠️ 금일 선정된 종목이 없습니다.")
@@ -257,6 +316,62 @@ class TradingBot:
             error_msg = f"종목 선정 중 오류 발생: {str(e)}"
             print(f"❌ {error_msg}")
             self.notifier.send_message(f"🚨 {error_msg}")
+
+    def _allocate_portfolio(self):
+        """
+        선정된 종목에 대해 자산 배분 실행
+
+        Portfolio Strategy를 사용하여 종목별 투자 금액을 결정합니다.
+        - 계좌의 가용 예수금 조회
+        - Portfolio.allocate() 호출
+        - self.portfolio_allocation에 결과 저장
+        """
+        print("\n" + "="*50)
+        print("💼 자산 배분 시작...")
+        print("="*50)
+
+        try:
+            # 계좌 정보 조회 (가용 예수금)
+            balance = self.account_api.get_balance()
+            cash_balance = balance.get('cash_balance', 0)
+
+            if cash_balance <= 0:
+                print("⚠️ 가용 예수금이 없습니다.")
+                self.portfolio_allocation = {}
+                return
+
+            # MAX_BUY_AMOUNT와 실제 예수금 중 작은 값 사용
+            total_budget = min(cash_balance, config.MAX_BUY_AMOUNT * len(self.selected_stocks))
+
+            print(f"💰 가용 예수금: {cash_balance:,}원")
+            print(f"📊 총 투자 예산: {total_budget:,}원")
+            print(f"🎯 선정 종목 수: {len(self.selected_stocks)}개")
+
+            # Portfolio Strategy로 자산 배분
+            self.portfolio_allocation = self.portfolio.allocate(
+                selected_stocks=self.selected_stocks,
+                total_budget=total_budget
+            )
+
+            # 배분 결과 검증
+            total_allocated = sum(self.portfolio_allocation.values())
+            if total_allocated > total_budget:
+                print(f"⚠️ 배분 금액({total_allocated:,}원)이 예산({total_budget:,}원)을 초과했습니다.")
+                print("  → 비율에 맞춰 재조정합니다.")
+                # 비율에 맞춰 재조정
+                ratio = total_budget / total_allocated
+                self.portfolio_allocation = {
+                    stock: amount * ratio
+                    for stock, amount in self.portfolio_allocation.items()
+                }
+
+            print("\n✅ 자산 배분 완료")
+            print("="*50)
+
+        except Exception as e:
+            error_msg = f"자산 배분 중 오류 발생: {str(e)}"
+            print(f"❌ {error_msg}")
+            self.portfolio_allocation = {}
 
     def monitor_and_trade(self):
         """
@@ -328,12 +443,18 @@ class TradingBot:
 
     def _check_buy_signal(self, stock_code: str):
         """
-        매수 시그널 체크
+        매수 시그널 체크 및 포트폴리오 배분 금액 기반 매수
 
         Args:
             stock_code: 종목 코드
         """
         try:
+            # 포트폴리오 배분 확인
+            allocated_amount = self.portfolio_allocation.get(stock_code, 0)
+            if allocated_amount <= 0:
+                # 배분되지 않은 종목은 매수하지 않음
+                return
+
             # 현재 시세 조회
             current_data = self.market_api.get_current_price(stock_code)
             if not current_data:
@@ -348,8 +469,9 @@ class TradingBot:
 
                 if signal == 'BUY':
                     print(f"  🟢 [{strategy.name}] {stock_code} 매수 시그널!")
+                    print(f"     배분 금액: {allocated_amount:,.0f}원")
                     # TODO: 실제 매수 주문 실행
-                    # self._execute_buy_order(stock_code, current_data)
+                    # self._execute_buy_order(stock_code, current_data, allocated_amount)
                     break  # 하나의 전략에서라도 매수 시그널이 나오면 실행
 
         except Exception as e:
@@ -552,6 +674,7 @@ class TradingBot:
         # Discord 상세 시작 알림 (.env 기반 동적 생성)
         selectors_str = ', '.join(config.SELECTION_POLICIES) if config.SELECTION_POLICIES else '없음'
         strategies_str = ', '.join(config.ACTIVE_STRATEGIES) if config.ACTIVE_STRATEGIES else '없음'
+        portfolio_str = self.portfolio.name if self.portfolio else '없음'
 
         startup_message = f"""🚀 **AutoFIRE Trading Bot 시작**
 
@@ -560,11 +683,14 @@ class TradingBot:
 🎲 **종목 선택 전략** ({len(self.selectors)}개)
 {selectors_str}
 
+💼 **자산 배분 전략**
+{portfolio_str}
+
 📈 **매매 전략** ({len(self.strategies)}개)
 {strategies_str}
 
 ⏰ **스케줄**
-• {config.SELECTION_TIME}: 종목 선정
+• {config.SELECTION_TIME}: 종목 선정 및 자산 배분
 • {config.MARKET_OPEN_TIME}~{config.MARKET_CLOSE_TIME}: {config.MONITOR_INTERVAL}분마다 모니터링
 • {config.REPORT_TIME}: 일일 리포트
 
